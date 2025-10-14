@@ -9,7 +9,7 @@ from LHW.envs.common import mujoco_env
 from LHW.envs.common import robot_interface
 from LHW.envs.common import config_builder
 
-from .gen_xml import *
+from LHW.envs.jvrc.gen_xml import *
 
 class JvrcWalkEnv(mujoco_env.MujocoEnv):
     def __init__(self, path_to_yaml = None):

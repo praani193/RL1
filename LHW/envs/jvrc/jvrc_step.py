@@ -10,7 +10,7 @@ from LHW.envs.common import robot_interface
 from LHW.envs.common import config_builder
 from LHW.envs.jvrc.jvrc_walk import JvrcWalkEnv
 
-from .gen_xml import *
+from LHW.envs.jvrc.gen_xml import *
 
 class JvrcStepEnv(JvrcWalkEnv):
     def __init__(self, path_to_yaml = None):
