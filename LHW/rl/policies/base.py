@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from torch import sqrt
 
 def normc_fn(m):
@@ -12,52 +11,52 @@ def normc_fn(m):
         if m.bias is not None:
             m.bias.data.fill_(0)
 
-# The base class for an actor. Includes functions for normalizing state (optional)
 class Net(nn.Module):
-  def __init__(self):
-    super(Net, self).__init__()
+    def __init__(self):
+        super(Net, self).__init__()
+        self.welford_state_mean = torch.zeros(1)
+        self.welford_state_mean_diff = torch.ones(1)
+        self.welford_state_n = 1
 
-    self.welford_state_mean = torch.zeros(1)
-    self.welford_state_mean_diff = torch.ones(1)
-    self.welford_state_n = 1
+    def forward(self):
+        raise NotImplementedError
 
-  def forward(self):
-    raise NotImplementedError
+    def normalize_state(self, state, update=True):
+        state = torch.as_tensor(state, dtype=torch.float32)
 
-  def normalize_state(self, state, update=True):
-    state = torch.Tensor(state)
+        # Initialize stats for new state dimension
+        if self.welford_state_n == 1:
+            self.welford_state_mean = torch.zeros(state.size(-1))
+            self.welford_state_mean_diff = torch.ones(state.size(-1))
 
-    if self.welford_state_n == 1:
-      self.welford_state_mean = torch.zeros(state.size(-1))
-      self.welford_state_mean_diff = torch.ones(state.size(-1))
+        # Welford running mean/variance update
+        if update:
+            if state.ndim == 1:
+                delta = state - self.welford_state_mean
+                self.welford_state_mean += delta / self.welford_state_n
+                self.welford_state_mean_diff += delta * (state - self.welford_state_mean)
+                self.welford_state_n += 1
+            elif state.ndim == 2:
+                for state_n in state:
+                    delta = state_n - self.welford_state_mean
+                    self.welford_state_mean += delta / self.welford_state_n
+                    self.welford_state_mean_diff += delta * (state_n - self.welford_state_mean)
+                    self.welford_state_n += 1
+            elif state.ndim == 3:
+                for seq in state:
+                    for state_n in seq:
+                        delta = state_n - self.welford_state_mean
+                        self.welford_state_mean += delta / self.welford_state_n
+                        self.welford_state_mean_diff += delta * (state_n - self.welford_state_mean)
+                        self.welford_state_n += 1
 
-    if update:
-      if len(state.size()) == 1: # If we get a single state vector 
-        state_old = self.welford_state_mean
-        self.welford_state_mean += (state - state_old) / self.welford_state_n
-        self.welford_state_mean_diff += (state - state_old) * (state - state_old)
-        self.welford_state_n += 1
-      elif len(state.size()) == 2: # If we get a batch
-        print("NORMALIZING 2D TENSOR (this should not be happening)")
-        for r_n in r:
-          state_old = self.welford_state_mean
-          self.welford_state_mean += (state_n - state_old) / self.welford_state_n
-          self.welford_state_mean_diff += (state_n - state_old) * (state_n - state_old)
-          self.welford_state_n += 1
-      elif len(state.size()) == 3: # If we get a batch of sequences
-        print("NORMALIZING 3D TENSOR (this really should not be happening)")
-        for r_t in r:
-          for r_n in r_t:
-            state_old = self.welford_state_mean
-            self.welford_state_mean += (state_n - state_old) / self.welford_state_n
-            self.welford_state_mean_diff += (state_n - state_old) * (state_n - state_old)
-            self.welford_state_n += 1
-    return (state - self.welford_state_mean) / sqrt(self.welford_state_mean_diff / self.welford_state_n)
+        std = sqrt(self.welford_state_mean_diff / self.welford_state_n)
+        return (state - self.welford_state_mean) / (std + 1e-8)
 
-  def copy_normalizer_stats(self, net):
-    self.welford_state_mean = net.self_state_mean
-    self.welford_state_mean_diff = net.welford_state_mean_diff
-    self.welford_state_n = net.welford_state_n
-  
-  def initialize_parameters(self):
-    self.apply(normc_fn)
+    def copy_normalizer_stats(self, net):
+        self.welford_state_mean = net.welford_state_mean.clone()
+        self.welford_state_mean_diff = net.welford_state_mean_diff.clone()
+        self.welford_state_n = net.welford_state_n
+
+    def initialize_parameters(self):
+        self.apply(normc_fn)
