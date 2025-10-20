@@ -1,72 +1,36 @@
 from pathlib import Path
 import sys
+import argparse
+import ray
 from functools import partial
+
+import numpy as np
+import torch
 import pickle
 import shutil
 
-import ray
-import torch
+from rl.algos.ppo import PPO
+from rl.envs.wrappers import SymmetricEnv
+from rl.utils.eval import EvaluateEnv
 
-from LHW.rl.algos.ppo import PPO
-from LHW.rl.envs.wrappers import SymmetricEnv
-from LHW.rl.utils.eval import EvaluateEnv
-
-# ---------------- Environment Import ----------------
 def import_env(env_name_str):
-    if env_name_str == 'jvrc_walk':
+    if env_name_str=='jvrc_walk':
         from envs.jvrc import JvrcWalkEnv as Env
-    elif env_name_str == 'jvrc_step':
+    elif env_name_str=='jvrc_step':
         from envs.jvrc import JvrcStepEnv as Env
-    elif env_name_str == 'h1':
+    elif env_name_str=='h1':
         from envs.h1 import H1Env as Env
     else:
         raise Exception("Check env name!")
     return Env
 
-# ---------------- Training ----------------
-def run_experiment_train(env_name="h1", logdir=None):
-    print("\n--- Training Configuration ---")
-    if logdir is None:
-        logdir = Path("C:/Users/Lenovo/Desktop/RL_logs")
-    logdir.mkdir(parents=True, exist_ok=True)
-
-    # Create Args class with defaults
-    class Args:
-        pass
-
-    args = Args()
-    args.env = env_name
-    args.logdir = logdir
-    args.input_norm_steps = 100000
-    args.n_itr = 20000
-    args.lr = 1e-4
-    args.eps = 1e-5
-    args.lam = 0.95
-    args.gamma = 0.99
-    args.std_dev = 0.223
-    args.learn_std = False
-    args.entropy_coeff = 0.0
-    args.clip = 0.2
-    args.minibatch_size = 64
-    args.epochs = 3
-    args.use_gae = True
-    args.num_procs = 12
-    args.max_grad_norm = 0.05
-    args.max_traj_len = 400
-    args.no_mirror = False
-    args.mirror_coeff = 0.4
-    args.eval_freq = 100
-    args.continued = None
-    args.recurrent = False
-    args.imitate = None
-    args.imitate_coeff = 0.3
-    args.yaml = None
-
-    # Import the correct environment
+def run_experiment(args):
+    # import the correct environment
     Env = import_env(args.env)
+
+    # wrapper function for creating parallelized envs
     env_fn = partial(Env, path_to_yaml=args.yaml)
     _env = env_fn()
-
     if not args.no_mirror:
         try:
             print("Wrapping in SymmetricEnv.")
@@ -77,72 +41,103 @@ def run_experiment_train(env_name="h1", logdir=None):
         except AttributeError as e:
             print("Warning! Cannot use SymmetricEnv.", e)
 
-    # Initialize Ray
+    # Set up Parallelism
+    #os.environ['OMP_NUM_THREADS'] = '1'  # [TODO: Is this needed?]
     if not ray.is_initialized():
         ray.init(num_cpus=args.num_procs)
 
-    # Save hyperparameters
+    # dump hyperparameters
+    Path.mkdir(args.logdir, parents=True, exist_ok=True)
     pkl_path = Path(args.logdir, "experiment.pkl")
     with open(pkl_path, 'wb') as f:
         pickle.dump(args, f)
 
-    # Copy YAML config if exists
+    # copy config file
     if args.yaml:
         config_out_path = Path(args.logdir, "config.yaml")
         shutil.copyfile(args.yaml, config_out_path)
 
-    # Start PPO training
     algo = PPO(env_fn, args)
     algo.train(env_fn, args.n_itr)
 
-
-# ---------------- Evaluation ----------------
-def run_experiment_eval(path_to_model=None):
-    # Defaults
-    if path_to_model is None:
-        path_to_model = Path("C:/Users/Lenovo/Desktop/RL_logs")
-
-    path_to_actor = Path(path_to_model, "actor.pt")
-    path_to_critic = Path(path_to_model, "critic.pt")
-    path_to_pkl = Path(path_to_model, "experiment.pkl")
-
-    # Load experiment args
-    run_args = pickle.load(open(path_to_pkl, "rb"))
-
-    # Load trained policy and critic
-    policy = torch.load(path_to_actor, weights_only=False)
-    critic = torch.load(path_to_critic, weights_only=False)
-    policy.eval()
-    critic.eval()
-
-    # Import the correct environment
-    Env = import_env(run_args.env)
-    yaml_path = Path(run_args.yaml) if run_args.yaml else None
-    env = partial(Env, yaml_path)()
-
-    # Run evaluation
-    e = EvaluateEnv(env, policy, args=run_args)
-    e.run()
-
-
-# ---------------- Main ----------------
 if __name__ == "__main__":
-    print("Welcome to LHW RL framework! Do you want to 'train' or 'eval'?")
-    mode = input().strip().lower()
 
-    if mode == 'train':
-        print("Enter environment name (default: h1):")
-        env_name = input().strip() or "h1"
-        print("Enter log directory (default: C:/Users/Lenovo/Desktop/RL_logs):")
-        logdir_input = input().strip()
-        logdir = Path(logdir_input) if logdir_input else None
-        run_experiment_train(env_name, logdir)
+    parser = argparse.ArgumentParser()
 
-    elif mode == 'eval':
-        print("Enter path to model directory (default: C:/Users/Lenovo/Desktop/RL_logs):")
-        path_input = input().strip()
-        path_to_model = Path(path_input) if path_input else None
-        run_experiment_eval(path_to_model)
+    if sys.argv[1] == 'train':
+        sys.argv.remove(sys.argv[1])
 
-    else:
-        print("Invalid option. Please enter 'train' or 'eval'.")
+        parser.add_argument("--env", required=True, type=str)
+        parser.add_argument("--logdir", default=Path("/tmp/logs"), type=Path, help="Path to save weights and logs")
+        parser.add_argument("--input-norm-steps", type=int, default=100000)
+        parser.add_argument("--n-itr", type=int, default=20000, help="Number of iterations of the learning algorithm")
+        parser.add_argument("--lr", type=float, default=1e-4, help="Adam learning rate") # Xie
+        parser.add_argument("--eps", type=float, default=1e-5, help="Adam epsilon (for numerical stability)")
+        parser.add_argument("--lam", type=float, default=0.95, help="Generalized advantage estimate discount")
+        parser.add_argument("--gamma", type=float, default=0.99, help="MDP discount")
+        parser.add_argument("--std-dev", type=float, default=0.223, help="Action noise for exploration")
+        parser.add_argument("--learn-std", action="store_true", help="Exploration noise will be learned")
+        parser.add_argument("--entropy-coeff", type=float, default=0.0, help="Coefficient for entropy regularization")
+        parser.add_argument("--clip", type=float, default=0.2, help="Clipping parameter for PPO surrogate loss")
+        parser.add_argument("--minibatch-size", type=int, default=64, help="Batch size for PPO updates")
+        parser.add_argument("--epochs", type=int, default=3, help="Number of optimization epochs per PPO update") #Xie
+        parser.add_argument("--use-gae", type=bool, default=True,help="Whether or not to calculate returns using Generalized Advantage Estimation")
+        parser.add_argument("--num-procs", type=int, default=12, help="Number of threads to train on")
+        parser.add_argument("--max-grad-norm", type=float, default=0.05, help="Value to clip gradients at")
+        parser.add_argument("--max-traj-len", type=int, default=400, help="Max episode horizon")
+        parser.add_argument("--no-mirror", required=False, action="store_true", help="to use SymmetricEnv")
+        parser.add_argument("--mirror-coeff", required=False, default=0.4, type=float, help="weight for mirror loss")
+        parser.add_argument("--eval-freq", required=False, default=100, type=int, help="Frequency of performing evaluation")
+        parser.add_argument("--continued", required=False, type=Path, help="path to pretrained weights")
+        parser.add_argument("--recurrent", required=False, action="store_true", help="use LSTM instead of FF")
+        parser.add_argument("--imitate", required=False, type=str, default=None, help="Policy to imitate")
+        parser.add_argument("--imitate-coeff", required=False, type=float, default=0.3, help="Coefficient for imitation loss")
+        parser.add_argument("--yaml", required=False, type=str, default=None, help="Path to config file passed to Env class")
+        args = parser.parse_args()
+
+        run_experiment(args)
+
+    elif sys.argv[1] == 'eval':
+        sys.argv.remove(sys.argv[1])
+
+        parser.add_argument("--path", required=False, type=Path, default=Path("/tmp/logs"),
+                            help="Path to trained model dir")
+        parser.add_argument("--out-dir", required=False, type=Path, default=None,
+                            help="Path to directory to save videos")
+        parser.add_argument("--ep-len", required=False, type=int, default=10,
+                            help="Episode length to play (in seconds)")
+        args = parser.parse_args()
+
+        path_to_actor = ""
+        if args.path.is_file() and args.path.suffix==".pt":
+            path_to_actor = args.path
+        elif args.path.is_dir():
+            path_to_actor = Path(args.path, "actor.pt")
+        else:
+            raise Exception("Invalid path to actor module: ", args.path)
+
+        path_to_critic = Path(path_to_actor.parent, "critic" + str(path_to_actor).split('actor')[1])
+        path_to_pkl = Path(path_to_actor.parent, "experiment.pkl")
+
+        # load experiment args
+        run_args = pickle.load(open(path_to_pkl, "rb"))
+        # load trained policy
+        policy = torch.load(path_to_actor, weights_only=False)
+        critic = torch.load(path_to_critic, weights_only=False)
+        policy.eval()
+        critic.eval()
+
+        # load experiment args
+        run_args = pickle.load(open(path_to_pkl, "rb"))
+
+        # import the correct environment
+        Env = import_env(run_args.env)
+        if "yaml" in run_args and run_args.yaml is not None:
+            yaml_path = Path(run_args.yaml)
+        else:
+            yaml_path = None
+        env = partial(Env, yaml_path)()
+
+        # run
+        e = EvaluateEnv(env, policy, args)
+        e.run()

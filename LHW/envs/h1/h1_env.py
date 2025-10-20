@@ -75,12 +75,11 @@ class Task:
         pass
 
 class H1Env(mujoco_env.MujocoEnv):
-    def __init__(self, path_to_yaml = None):
+    def __init__(self, path_to_yaml=None):
 
         ## Load CONFIG from yaml ##
         if path_to_yaml is None:
             path_to_yaml = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'configs/base.yaml')
-
         self.cfg = config_builder.load_yaml(path_to_yaml)
 
         sim_dt = self.cfg.sim_dt
@@ -91,10 +90,13 @@ class H1Env(mujoco_env.MujocoEnv):
         self.perturb_interval = self.cfg.perturbation.interval/control_dt
         self.history_len = self.cfg.obs_history_len
 
-        path_to_xml = '/tmp/mjcf-export/h1/h1.xml'
+        # ---------------- XML MODEL PATH FIX ----------------
+        path_to_xml = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'robots', 'h1', 'h1.xml'))
+        os.makedirs(os.path.dirname(path_to_xml), exist_ok=True)
+
         if not os.path.exists(path_to_xml):
-            export_dir = os.path.dirname(path_to_xml)
-            builder(export_dir, config={
+            print("Modifying XML model...")
+            builder(os.path.dirname(path_to_xml), config={
                 'unused_joints': [WAIST_JOINTS, ARM_JOINTS],
                 'rangefinder': False,
                 'raisedplatform': False,
@@ -102,6 +104,10 @@ class H1Env(mujoco_env.MujocoEnv):
                 'jointlimited': self.cfg.jointlimited,
                 'minimal': self.cfg.reduced_xml,
             })
+            print(f"Exporting XML model to {path_to_xml}")
+
+        print(f"[DEBUG] Loading H1 model from: {path_to_xml}")
+        # ---------------------------------------------------
 
         mujoco_env.MujocoEnv.__init__(self, path_to_xml, sim_dt, control_dt)
 
@@ -134,7 +140,6 @@ class H1Env(mujoco_env.MujocoEnv):
 
         # set action space
         action_space_size = len(self.leg_names)
-        action = np.zeros(action_space_size)
         self.action_space = np.zeros(action_space_size)
         self.prev_prediction = np.zeros(action_space_size)
 
@@ -160,8 +165,8 @@ class H1Env(mujoco_env.MujocoEnv):
         # copy the original model
         self.default_model = copy.deepcopy(self.model)
 
+    # -------------------- OBSERVATION --------------------
     def get_obs(self):
-        # internal state
         qpos = np.copy(self.interface.get_qpos())
         qvel = np.copy(self.interface.get_qvel())
         root_r, root_p = tf3.euler.quat2euler(qpos[3:7])[0:2]
@@ -172,12 +177,6 @@ class H1Env(mujoco_env.MujocoEnv):
         motor_vel = self.interface.get_act_joint_velocities()
         motor_tau = self.interface.get_act_joint_torques()
 
-        # add some Gaussian noise to observations
-        if self.cfg.observation_noise.enabled:
-            scales = self.cfg.observation_noise.scales
-            level = self.cfg.observation_noise.multiplier
-
-        # add some noise to observations
         if self.cfg.observation_noise.enabled:
             noise_type = self.cfg.observation_noise.type
             scales = self.cfg.observation_noise.scales
@@ -211,13 +210,8 @@ class H1Env(mujoco_env.MujocoEnv):
             self.observation_history.appendleft(state)
         return np.array(self.observation_history).flatten()
 
+    # ---------------------- STEP -----------------------
     def step(self, action):
-        # Compute the applied action to actuators
-        # (targets <- Policy predictions)
-        # (offsets <- Half-sitting pose)
-
-        # action vector assumed to be in the following order:
-        # [leg_0, leg_1, ..., leg_n, waist_0, ..., waist_n, arm_0, arm_1, ..., arm_n]
         targets = self.cfg.action_smoothing * action + \
             (1 - self.cfg.action_smoothing) * self.prev_prediction
         offsets = [
@@ -230,12 +224,10 @@ class H1Env(mujoco_env.MujocoEnv):
 
         if self.cfg.dynamics_randomization.enable and np.random.randint(self.dynrand_interval)==0:
             self.randomize_dyn()
-
         if self.cfg.perturbation.enable and np.random.randint(self.perturb_interval)==0:
             self.randomize_perturb()
 
         self.prev_prediction = action
-
         return obs, sum(rewards.values()), done, rewards
 
     def reset_model(self):
@@ -243,31 +235,24 @@ class H1Env(mujoco_env.MujocoEnv):
             self.randomize_dyn()
 
         init_qpos, init_qvel = self.nominal_pose.copy(), [0] * self.interface.nv()
-
-        # add some initialization noise to root orientation (roll, pitch)
         c = self.cfg.init_noise * np.pi/180
         root_adr = self.interface.get_jnt_qposadr_by_name('root')[0]
         init_qpos[root_adr+2] = np.random.uniform(1.0, 1.02)
-        init_qpos[root_adr+3:root_adr+7] = tf3.euler.euler2quat(np.random.uniform(-c, c), np.random.uniform(-c, c), 0)
+        init_qpos[root_adr+3:root_adr+7] = tf3.euler.euler2quat(
+            np.random.uniform(-c, c), np.random.uniform(-c, c), 0
+        )
         init_qpos[root_adr+7:] += np.random.uniform(-c, c, len(self.leg_names))
 
-        # set up init state
-        self.set_state(
-            np.asarray(init_qpos),
-            np.asarray(init_qvel)
-        )
-        # do a few simulation steps to avoid big contact forces in the start
+        self.set_state(np.asarray(init_qpos), np.asarray(init_qvel))
         for _ in range(3):
             self.interface.step()
 
         self.task.reset()
-
         self.prev_prediction = np.zeros_like(self.prev_prediction)
         self.observation_history = collections.deque(maxlen=self.history_len)
-        obs = self.get_obs()
-        return obs
+        return self.get_obs()
 
-    #### randomizations and other utility functions ###########
+    # ------------------ RANDOMIZATION ------------------
     def randomize_perturb(self):
         frc_mag = self.cfg.perturbation.force_magnitude
         tau_mag = self.cfg.perturbation.force_magnitude
@@ -278,14 +263,12 @@ class H1Env(mujoco_env.MujocoEnv):
                 self.data.xfrc_applied = np.zeros_like(self.data.xfrc_applied)
 
     def randomize_dyn(self):
-        # dynamics randomization
         dofadr = [self.interface.get_jnt_qveladr_by_name(jn)
                   for jn in self.leg_names]
         for jnt in dofadr:
-            self.model.dof_frictionloss[jnt] = np.random.uniform(0, 2)    # actuated joint frictionloss
-            self.model.dof_damping[jnt] = np.random.uniform(0.02, 2)      # actuated joint damping
+            self.model.dof_frictionloss[jnt] = np.random.uniform(0, 2)
+            self.model.dof_damping[jnt] = np.random.uniform(0.02, 2)
 
-        # randomize com
         bodies = ["pelvis"]
         for legjoint in self.leg_names:
             bodyid = self.model.joint(legjoint).bodyid

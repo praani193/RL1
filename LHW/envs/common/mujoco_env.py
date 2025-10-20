@@ -11,12 +11,10 @@ class MujocoEnv():
     """
 
     def __init__(self, model_path, sim_dt, control_dt):
-        if model_path.startswith("/"):
-            fullpath = model_path
-        else:
-            raise Exception("Provide full path to robot description package.")
+        fullpath = os.path.abspath(model_path)
+
         if not os.path.exists(fullpath):
-            raise IOError("File %s does not exist" % fullpath)
+            raise IOError(f"File {fullpath} does not exist")
 
         self.spec = mujoco.MjSpec()
         self.spec.from_file(fullpath)
@@ -25,7 +23,7 @@ class MujocoEnv():
         self.viewer = None
 
         # set frame skip and sim dt
-        self.frame_skip = (control_dt/sim_dt)
+        self.frame_skip = (control_dt / sim_dt)
         self.model.opt.timestep = sim_dt
 
         self.init_qpos = self.data.qpos.ravel().copy()
