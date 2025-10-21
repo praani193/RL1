@@ -1,6 +1,10 @@
 import contextlib
 import os
 import numpy as np
+import os
+os.environ["MUJOCO_GL"] = "glfw"
+import mujoco
+
 import mujoco
 import mujoco_viewer
 
