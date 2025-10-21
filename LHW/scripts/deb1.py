@@ -1,21 +1,20 @@
-import mujoco
-from pathlib import Path
+import numpy as np
+from LHW.envs.h1.h1_env import H1Env
+import time
 
-# Path to your MuJoCo XML
-xml_path = Path("C:\Users\Lenovo\Desktop\RL1\LHW\tmp\mjcf-export")  # e.g., "LHW/envs/jvrc/assets/jvrc_step.xml"
+# Create environment
+env = H1Env()
+obs = env.reset_model()
 
-# Load the model
-model = mujoco.MjModel.from_xml_path(str(xml_path))
-data = mujoco.MjData(model)
+# Initialize viewer
+env.render()
+env.viewer_setup()
 
-# Print all bodies and indices
-print("Checking bodies in the MuJoCo model...")
-for i in range(model.nbody):
-    print(f"Index {i}: {model.body(i).name}")
-print(f"Total bodies: {model.nbody}")
+# Visualization loop
+for _ in range(500):
+    action = np.zeros(len(env.leg_names))  # Convert to np.array
+    obs, reward, done, info = env.step(action)
+    env.render()
+    time.sleep(env.cfg.control_dt)
 
-# Check if required bodies exist
-required_bodies = ["R_ANKLE_P_S", "L_ANKLE_P_S"]
-for rb in required_bodies:
-    if rb not in [model.body(i).name for i in range(model.nbody)]:
-        print(f"Warning: {rb} not found in model!")
+env.close()
