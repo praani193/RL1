@@ -8,10 +8,13 @@ import numpy as np
 import torch
 import pickle
 import shutil
+import threading
+import time
 
 from LHW.rl.algos.ppo import PPO
 from LHW.rl.envs.wrappers import SymmetricEnv
 from LHW.rl.utils.eval import EvaluateEnv
+
 
 def import_env(env_name_str):
     if env_name_str=='jvrc_walk':
@@ -23,6 +26,51 @@ def import_env(env_name_str):
     else:
         raise Exception("Check env name!")
     return Env
+
+
+# ✅ Proper MuJoCo visualization thread
+def live_mujoco_viewer(env):
+    """
+    Continuously render the MuJoCo environment in a live window.
+    Compatible with mujoco_py or mujoco (dm_control) environments.
+    """
+    print("Starting live MuJoCo visualization...")
+
+    # Try to create a viewer based on the underlying simulator
+    viewer = None
+    try:
+        from mujoco_py import MjViewer
+        viewer = MjViewer(env.sim)
+        print("Using mujoco_py viewer.")
+    except Exception:
+        try:
+            import mujoco
+            from mujoco import viewer as mj_viewer
+            viewer = mj_viewer.launch_passive(env.sim, env.model)
+            print("Using mujoco (native) viewer.")
+        except Exception as e:
+            print("Could not start MuJoCo viewer:", e)
+            return
+
+    # Run rendering loop
+    while True:
+        try:
+            # Advance sim if possible (to visualize motion)
+            if hasattr(env, "step"):
+                env.step(np.zeros(env.action_space.shape))
+            # Render the viewer
+            if hasattr(env, "render"):
+                env.render()
+            elif viewer:
+                viewer.render()
+            time.sleep(0.02)
+        except KeyboardInterrupt:
+            print("Visualization stopped (KeyboardInterrupt).")
+            break
+        except Exception as e:
+            print("Visualization stopped:", e)
+            break
+
 
 def run_experiment(args):
     # import the correct environment
@@ -41,8 +89,11 @@ def run_experiment(args):
         except AttributeError as e:
             print("Warning! Cannot use SymmetricEnv.", e)
 
+    # ✅ Launch MuJoCo viewer in background thread
+    vis_thread = threading.Thread(target=live_mujoco_viewer, args=(_env,), daemon=True)
+    vis_thread.start()
+
     # Set up Parallelism
-    #os.environ['OMP_NUM_THREADS'] = '1'  # [TODO: Is this needed?]
     if not ray.is_initialized():
         ray.init(num_cpus=args.num_procs)
 
@@ -60,6 +111,9 @@ def run_experiment(args):
     algo = PPO(env_fn, args)
     algo.train(env_fn, args.n_itr)
 
+    vis_thread.join(timeout=1)
+
+
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
@@ -71,7 +125,7 @@ if __name__ == "__main__":
         parser.add_argument("--logdir", default=Path("/tmp/logs"), type=Path, help="Path to save weights and logs")
         parser.add_argument("--input-norm-steps", type=int, default=100000)
         parser.add_argument("--n-itr", type=int, default=20000, help="Number of iterations of the learning algorithm")
-        parser.add_argument("--lr", type=float, default=1e-4, help="Adam learning rate") # Xie
+        parser.add_argument("--lr", type=float, default=1e-4, help="Adam learning rate")
         parser.add_argument("--eps", type=float, default=1e-5, help="Adam epsilon (for numerical stability)")
         parser.add_argument("--lam", type=float, default=0.95, help="Generalized advantage estimate discount")
         parser.add_argument("--gamma", type=float, default=0.99, help="MDP discount")
@@ -80,7 +134,7 @@ if __name__ == "__main__":
         parser.add_argument("--entropy-coeff", type=float, default=0.0, help="Coefficient for entropy regularization")
         parser.add_argument("--clip", type=float, default=0.2, help="Clipping parameter for PPO surrogate loss")
         parser.add_argument("--minibatch-size", type=int, default=64, help="Batch size for PPO updates")
-        parser.add_argument("--epochs", type=int, default=3, help="Number of optimization epochs per PPO update") #Xie
+        parser.add_argument("--epochs", type=int, default=3, help="Number of optimization epochs per PPO update")
         parser.add_argument("--use-gae", type=bool, default=True,help="Whether or not to calculate returns using Generalized Advantage Estimation")
         parser.add_argument("--num-procs", type=int, default=12, help="Number of threads to train on")
         parser.add_argument("--max-grad-norm", type=float, default=0.05, help="Value to clip gradients at")
@@ -127,10 +181,8 @@ if __name__ == "__main__":
         policy.eval()
         critic.eval()
 
-        # load experiment args
         run_args = pickle.load(open(path_to_pkl, "rb"))
 
-        # import the correct environment
         Env = import_env(run_args.env)
         if "yaml" in run_args and run_args.yaml is not None:
             yaml_path = Path(run_args.yaml)
@@ -138,6 +190,5 @@ if __name__ == "__main__":
             yaml_path = None
         env = partial(Env, yaml_path)()
 
-        # run
         e = EvaluateEnv(env, policy, args)
         e.run()
