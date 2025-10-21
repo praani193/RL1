@@ -1,6 +1,8 @@
 import torch
 import time
 from pathlib import Path
+import os
+os.environ["MUJOCO_GL"] = "glfw"
 
 import mujoco
 import mujoco.viewer

@@ -1,7 +1,8 @@
 import numpy as np
 
+
 class RobotBase(object):
-    def __init__(self, pdgains, dt, client, task, pdrand_k = 0, sim_bemf = False, sim_motor_dyn = False):
+    def __init__(self, pdgains, dt, client, task, pdrand_k=0, sim_bemf=False, sim_motor_dyn=False):
 
         self.client = client
         self.task = task
@@ -10,13 +11,13 @@ class RobotBase(object):
         self.sim_bemf = sim_bemf
         self.sim_motor_dyn = sim_motor_dyn
 
-        assert (self.sim_bemf & self.sim_motor_dyn)==False, \
+        assert (self.sim_bemf & self.sim_motor_dyn) == False, \
             "You cannot simulate back-EMF and motor dynamics simultaneously!"
 
         # set PD gains
         self.kp = pdgains[0]
         self.kd = pdgains[1]
-        assert self.kp.shape==self.kd.shape==(self.client.nu(),), \
+        assert self.kp.shape == self.kd.shape == (self.client.nu(),), \
             f"kp shape {self.kp.shape} and kd shape {self.kd.shape} must be {(self.client.nu(),)}"
 
         # torque damping param
@@ -25,23 +26,23 @@ class RobotBase(object):
         self.client.set_pd_gains(self.kp, self.kd)
         tau = self.client.step_pd(np.zeros(self.client.nu()), np.zeros(self.client.nu()))
         w = self.client.get_act_joint_velocities()
-        assert len(w)==len(tau)
-        
+        assert len(w) == len(tau)
+
         self.prev_action = None
         self.prev_torque = None
         self.iteration_count = np.inf
 
         # frame skip parameter
-        if (np.around(self.control_dt%self.client.sim_dt(), 6)):
+        if (np.around(self.control_dt % self.client.sim_dt(), 6)):
             raise Exception("Control dt should be an integer multiple of Simulation dt.")
-        self.frame_skip = int(self.control_dt/self.client.sim_dt())
+        self.frame_skip = int(self.control_dt / self.client.sim_dt())
 
     def _do_simulation(self, target, n_frames):
         # randomize PD gains
         if self.pdrand_k:
             k = self.pdrand_k
-            kp = np.random.uniform((1-k)*self.kp, (1+k)*self.kp)
-            kd = np.random.uniform((1-k)*self.kd, (1+k)*self.kd)
+            kp = np.random.uniform((1 - k) * self.kp, (1 + k) * self.kp)
+            kd = np.random.uniform((1 - k) * self.kd, (1 + k) * self.kd)
             self.client.set_pd_gains(kp, kd)
 
         assert target.shape == (self.client.nu(),), \
@@ -49,13 +50,13 @@ class RobotBase(object):
 
         ratio = self.client.get_gear_ratios()
 
-        if self.sim_bemf and np.random.randint(10)==0:
+        if self.sim_bemf and np.random.randint(10) == 0:
             self.tau_d = np.random.uniform(5, 40, self.client.nu())
 
         for _ in range(n_frames):
             w = self.client.get_act_joint_velocities()
             tau = self.client.step_pd(target, np.zeros(self.client.nu()))
-            tau = tau - self.tau_d*w
+            tau = tau - self.tau_d * w
             tau /= ratio
             self.client.set_motor_torque(tau, self.sim_motor_dyn)
             self.client.step()
