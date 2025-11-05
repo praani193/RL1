@@ -205,8 +205,27 @@ class PPO:
             mask_tensor = torch.ones_like(log_probs)
 
         # ratio between old and new policy, should be one at the first iteration
-        ratio = (log_probs - old_log_probs).exp()
+        # --- Compute modified PPO loss (Lmod) ---
+        ratio = torch.exp(log_probs - old_log_probs)
+        # r_t(θ)
+        """
+        adv = advantage_batch * mask_tensor
+        clip_ratio = torch.clamp(ratio, 1.0 - self.clip, 1.0 + self.clip)
 
+        rta = ratio * adv
+        clip_rta = clip_ratio * adv
+
+        max_part = torch.max(rta, clip_rta)
+        min_part = torch.min(rta, clip_rta)
+
+        alpha = 0.1
+        max_diff = 1.0
+        diff = torch.abs(rta) - torch.abs(clip_rta)
+        diff_clamped = torch.clamp(diff, -max_diff, max_diff)
+
+        Lmod_safe = 0.5 * (max_part + min_part) + alpha * diff_clamped
+        actor_loss = -torch.mean(Lmod_safe)
+"""
         # clipped surrogate loss
         cpi_loss = ratio * advantage_batch * mask_tensor
         clip_loss = ratio.clamp(1.0 - self.clip, 1.0 + self.clip) * advantage_batch * mask_tensor
@@ -215,6 +234,7 @@ class PPO:
         numerator = -torch.min(cpi_loss, clip_loss).sum()
         denom = mask_tensor.sum().clamp_min(1e-8)
         actor_loss = numerator / denom
+
 
         # clip fraction: apply mask
         clipped_bool = (torch.abs(ratio - 1) > self.clip).float()
