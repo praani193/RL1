@@ -17,8 +17,8 @@ def import_env(env_name_str):
     return Env
 
 def load_actor_critic(logdir):
-    actor_path = os.path.join(logdir, "actor_19999.pt")
-    critic_path = os.path.join(logdir, "critic_19999.pt")
+    actor_path = os.path.join(logdir, "actor_18999.pt")
+    critic_path = os.path.join(logdir, "critic_18999.pt")
     env_pkl = os.path.join(logdir, "experiment.pkl")
 
     # Load experiment config (not the env)
