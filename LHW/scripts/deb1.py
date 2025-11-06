@@ -1,11 +1,11 @@
 import numpy as np
-from LHW.envs.jvrc.jvrc_walk import JvrcWalkEnv
+from LHW.envs.h1.h1_env import H1Env
 import time
 import mujoco
 from mujoco import viewer
 
 # Create environment
-env = JvrcWalkEnv()
+env = H1Env()
 obs = env.reset_model()
 
 # Initialize model and data

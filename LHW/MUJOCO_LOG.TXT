@@ -1,3 +1,21 @@
 Tue Oct 21 21:07:45 2025
 ERROR: Auxiliary framebuffer is not complete, error 0x8cd6
 
+Thu Nov  6 01:21:55 2025
+WARNING: Error opening file '7ca7e38a-f511-4326-b029-2a44c02841b2.0': No such file or directory
+
+Thu Nov  6 01:23:45 2025
+WARNING: Error opening file 'events.out.tfevents.1762358436.DESKTOP-MA5G4HE.3792.0': No such file or directory
+
+Thu Nov  6 01:24:13 2025
+WARNING: Error opening file '.events.out.tfevents.1762358436.DESKTOP-MA5G4HE.3792.0': No such file or directory
+
+Thu Nov  6 01:25:50 2025
+WARNING: Error opening file 'C:\Users\Lenovo\Desktop\RL1\LHW\RL_logsr1\7ca7e38a-f511-4326-b029-2a44c02841b2.0': No such file or directory
+
+Thu Nov  6 01:26:19 2025
+WARNING: Model missing header ID
+
+Thu Nov  6 01:26:49 2025
+WARNING: Model missing header ID
+
