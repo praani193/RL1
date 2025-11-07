@@ -181,7 +181,7 @@ class PPO:
         data = Data(aggregated_data)
         return data
 
-    def update_actor_critic(self, obs_batch, action_batch, return_batch, advantage_batch, mask, mirror_observation=None, mirror_action=None):
+    def update_actor_critic(self, t, obs_batch, action_batch, return_batch, advantage_batch, mask, mirror_observation=None, mirror_action=None):
 
         # Ensure mask is a tensor of same shape as log_probs/entropy/values:
         # we will produce a mask_tensor with shape compatible with log_probs (N,1) or (T,B,1)
@@ -226,6 +226,22 @@ class PPO:
         Lmod_safe = 0.5 * (max_part + min_part) + alpha * diff_clamped
         actor_loss = -torch.mean(Lmod_safe)
 """
+        """
+        alpha = 0.1
+        tw = 2000
+        adv = advantage_batch * mask_tensor
+        rtat = ratio * adv
+        cl = ratio.clamp(1.0 - self.clip + 1.0+self.clip)*adv
+        avgt = 0.5*(cl+rtat)
+        cl1 = ratio.clamp(-1.0,1.0)*adv
+        min_var = torch.min(avgt , alpha*cl1)
+        max_var = torch.max(avgt , alpha*cl1)
+        if t <= tw:
+            shed_var = max_var
+        else:
+            shed_avr = min_var
+        
+        """
         # clipped surrogate loss
         cpi_loss = ratio * advantage_batch * mask_tensor
         clip_loss = ratio.clamp(1.0 - self.clip, 1.0 + self.clip) * advantage_batch * mask_tensor
@@ -465,7 +481,7 @@ class PPO:
                         advantage_batch = advantages[indices]
                         mask            = 1
 
-                    scalars = self.update_actor_critic(obs_batch, action_batch, return_batch, advantage_batch, mask, mirror_observation=obs_mirr, mirror_action=act_mirr)
+                    scalars = self.update_actor_critic(itr, obs_batch, action_batch, return_batch, advantage_batch, mask, mirror_observation=obs_mirr, mirror_action=act_mirr)
                     actor_loss, entropy_penalty, critic_loss, approx_kl_div, mirror_loss, imitation_loss, clip_fraction = scalars
 
                     actor_losses.append(float(actor_loss))
