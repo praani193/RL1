@@ -8,6 +8,8 @@ import numpy as np
 def import_env(env_name_str):
     if env_name_str == 'jvrc_walk':
         from LHW.envs.jvrc import JvrcWalkEnv as Env
+    elif env_name_str == 'jvrc_step':
+        from LHW.envs.jvrc import JvrcStepEnv as Env
     else:
         raise ValueError(f"Unknown environment: {env_name_str}")
     return Env
@@ -59,17 +61,17 @@ def interpret_commands(cmd):
     return actions
 
 # === Action Performer (with turning bias) ===
-def perform_action(env, actor, command, param):
-    obs = env.reset()
+def perform_action(env, actor, command, param, obs):
     done = False
 
     if command == "walk":
-        steps = int(param * 100)  # scale meters to steps
+        steps = int(param * 50)  # fewer steps for speed
         print(f" Walking forward for {param} meters ({steps} steps)...")
         for _ in range(steps):
             obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
             with torch.no_grad():
                 action = actor(obs_tensor).numpy()[0]
+
             obs, reward, done, info = env.step(action)
             try:
                 env.render()
@@ -82,38 +84,36 @@ def perform_action(env, actor, command, param):
         direction = "left" if command == "turn_left" else "right"
         print(f"🔄 Turning {direction}...")
 
-        # small bias to simulate turning
-        yaw_bias = -0.2 if direction == "left" else 0.2
+        yaw_bias = -0.78 if direction == "left" else 0.78  # adjust as needed
 
-        for _ in range(80):  # smooth turning motion
+        # smooth turning for 30 steps
+        for _ in range(30):
             obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
             with torch.no_grad():
                 action = actor(obs_tensor).numpy()[0]
 
-            # Inject bias (assuming yaw/hip joints respond to rotation)
-            # Here we modify some early indices of the action vector — tune as needed.
-            if len(action) > 2:
-                action[0] += yaw_bias
-                action[1] -= yaw_bias
+            # Apply yaw bias to correct action index for robot rotation
+            action[0] += yaw_bias  # adjust if needed for actual yaw joint
 
             obs, reward, done, info = env.step(action)
-
             try:
                 env.render()
             except:
                 pass
-
             if done:
                 break
 
     else:
         print(" Unknown command.")
 
+    return obs  # return the updated obs
+
 # === Interactive Loop ===
 if __name__ == "__main__":
+
     logdir = "."  # current folder where actor_*.pt etc. are located
     env, actor, critic = load_actor_critic(logdir)
-
+    obs = env.reset()
     print("\n Command-based robot controller ready!")
     print("Type commands like: 'walk 2 meters', 'turn left', or 'quit'.")
     print("You can also combine: 'turn right and walk 5 meters then turn left'\n")
@@ -127,4 +127,5 @@ if __name__ == "__main__":
                 print(" Exiting...")
                 exit(0)
             else:
-                perform_action(env, actor, command, param)
+                # Update obs after each action
+                obs = perform_action(env, actor, command, param, obs)
