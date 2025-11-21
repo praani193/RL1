@@ -4,7 +4,7 @@ import pickle
 import re
 import numpy as np
 
-#LEC
+# === Load Actor, Critic, and Environment ===
 def import_env(env_name_str):
     if env_name_str == 'jvrc_walk':
         from LHW.envs.jvrc import JvrcWalkEnv as Env
@@ -15,8 +15,8 @@ def import_env(env_name_str):
     return Env
 
 def load_actor_critic(logdir):
-    actor_path = os.path.join(logdir, "actor_2499.pt")
-    critic_path = os.path.join(logdir, "critic_2499.pt")
+    actor_path = os.path.join(logdir, "actor_199.pt")
+    critic_path = os.path.join(logdir, "critic_199.pt")
     env_pkl = os.path.join(logdir, "experiment.pkl")
 
     # Load experiment config
@@ -27,7 +27,7 @@ def load_actor_critic(logdir):
     Env = import_env(config.env_name if hasattr(config, 'env_name') else 'jvrc_walk')
     env = Env()
 
-    # Load actor and critic
+
     actor = torch.load(actor_path, map_location=torch.device('cpu'))
     critic = torch.load(critic_path, map_location=torch.device('cpu'))
     actor.eval()
@@ -36,8 +36,6 @@ def load_actor_critic(logdir):
     print(" Loaded actor, critic, and environment:", Env.__name__)
     return env, actor, critic
 
-
-# CI
 def interpret_commands(cmd):
     cmd = cmd.lower().strip()
     # Split input by "and", "then", or commas
@@ -46,74 +44,27 @@ def interpret_commands(cmd):
 
     for part in parts:
         part = part.strip()
-        if not part:
-            continue
-
         if "walk" in part:
             match = re.search(r"(\d+(\.\d+)?)\s*m", part)
             distance = float(match.group(1)) if match else 1.0
             actions.append(("walk", distance))
-
-        elif "turn right" in part:
-            # Expand turn-right sequence
-            expanded = [
-                ("walk", 1.0),
-                ("turn_right", None),
-                ("walk", 2.0),
-                ("turn_right", None),
-                ("walk", 2.0),
-                ("turn_right", None),
-                ("walk", 2.0),
-                ("turn_right", None),
-                ("walk", 1.0)
-            ]
-            actions.extend(expanded)
-
         elif "turn left" in part:
-            # Expand turn-left sequence
-            expanded = [
-                ("walk", 2.0),
-                ("turn_left", None),("walk", 1.0),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("turn_left", None),
-                ("walk",2.0)
-            ]
-            actions.extend(expanded)
-
+            actions.append(("turn_left", None))
+        elif "turn right" in part:
+            actions.append(("turn_right", None))
         elif "quit" in part or "exit" in part:
             actions.append(("quit", None))
-
         else:
             actions.append(("unknown", None))
 
-    # Print expanded sequence for user confirmation
-    readable = []
-    for command, param in actions:
-        if command == "walk":
-            readable.append(f"walk {param} mtrs")
-        elif command in ["turn_left", "turn_right"]:
-            readable.append(command.replace("_", " "))
-        else:
-            readable.append(command)
     return actions
 
-
-# AP
 def perform_action(env, actor, command, param, obs):
     done = False
 
     if command == "walk":
-        steps = int(param * 100)  # fewer steps for speed
-        print(f"Walking forward for {param} meters ({steps} steps)...")
+        steps = int(param * 50)  # fewer steps for speed
+        print(f" Walking forward for {param} meters ({steps} steps)...")
         for _ in range(steps):
             obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
             with torch.no_grad():
@@ -131,16 +82,14 @@ def perform_action(env, actor, command, param, obs):
         direction = "left" if command == "turn_left" else "right"
         print(f"Turning {direction}...")
 
-        yaw_bias = -0.35 if direction == "left" else 0.14
+        yaw_bias = -0.78 if direction == "left" else 0.78
 
-        # smooth turning for 30 steps
-        for _ in range(200):
+        for _ in range(30):
             obs_tensor = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
             with torch.no_grad():
                 action = actor(obs_tensor).numpy()[0]
 
-            # Apply yaw bias to correct action index for robot rotation
-            action[0] += yaw_bias  # adjust if needed for actual yaw joint
+            action[0] += yaw_bias
 
             obs, reward, done, info = env.step(action)
             try:
@@ -149,19 +98,19 @@ def perform_action(env, actor, command, param, obs):
                 pass
             if done:
                 break
-        action[0] -= yaw_bias
 
     else:
-        print("Unknown command.")
+        print(" Unknown command.")
 
-    return obs  # return the updated obs
+    return obs
 
+# === Interactive Loop ===
 if __name__ == "__main__":
 
     logdir = "."
     env, actor, critic = load_actor_critic(logdir)
     obs = env.reset()
-    print("\nCommand-based robot controller ready!")
+    print("\n Command-based robot controller ready!")
     print("Type commands like: 'walk 2 meters', 'turn left', or 'quit'.")
     print("You can also combine: 'turn right and walk 5 meters then turn left'\n")
 
@@ -171,7 +120,8 @@ if __name__ == "__main__":
 
         for command, param in commands:
             if command == "quit":
-                print("With you man...")
+                print(" Exiting...")
                 exit(0)
             else:
+                # Update obs after each action
                 obs = perform_action(env, actor, command, param, obs)
